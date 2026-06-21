@@ -23,7 +23,8 @@ impl HelloWorld {
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let notification_layer = Root::render_notification_layer(window, cx);
         div()
             .v_flex()
             .gap_2()
@@ -39,6 +40,7 @@ impl Render for HelloWorld {
             // )
             .child(self.mp.clone())
             .child(self.oscm.clone())
+            .children(notification_layer)
     }
 }
 

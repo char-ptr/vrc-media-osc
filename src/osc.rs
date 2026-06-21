@@ -15,10 +15,11 @@ use async_net::UdpSocket;
 use eyre::{Context as _, Result, eyre};
 use futures::{FutureExt, StreamExt};
 use futures_lite::FutureExt as _;
-use gpui::{AppContext, Context, Entity, ParentElement, Render, Styled, div};
+use gpui::{AppContext, Context, Entity, ParentElement, Render, Styled, Window, div};
 use gpui_component::{
     button::Button,
     input::{Input, InputState},
+    notification::NotificationType,
     *,
 };
 use human_repr::HumanDuration;
@@ -31,6 +32,7 @@ enum OscConnState {
     Connected,
     Closed(Option<Box<dyn Error + Send>>),
 }
+#[derive(Debug)]
 struct OscConnection {
     shutdown: Arc<AtomicBool>,
     state: OscConnState,
@@ -70,12 +72,14 @@ impl OscConnection {
                 }
             };
 
-            if let Err(conn_err) = sock.connect(addr).await {
+            if let Err(conn_err) = sock.connect(&addr).await {
+                println!("connection to socket failed :<");
                 tx_state
                     .send(OscConnState::Closed(Some(Box::new(conn_err))))
                     .await;
                 return;
             }
+            sock.send(&[0]).await;
             println!("connected");
             let mut con = false;
             while shutdown.load(std::sync::atomic::Ordering::Relaxed) == false {
@@ -99,7 +103,7 @@ impl OscConnection {
 
                         println!("{count} count");
                         let data_string = format!(
-                            "♪ {}{} [{}] by {:?} \n{:▒<10}\n❤️ MPRIS",
+                            "♪ {}{} [{}] by {:?} \n{:▒<10}",
                             match data.status {
                                 mpris::PlaybackStatus::Playing => "▶︎",
                                 mpris::PlaybackStatus::Paused => "⏸",
@@ -182,7 +186,7 @@ impl OscConnection {
                         let stop = match state { OscConnState::Closed(_) => true,_ => false,  };
                         this.update(cx, move |this, cx| {
                             this.state = state;
-
+                            println!("this = {this:#?}");
                             cx.notify()
                         });
                         if stop {break}
@@ -201,6 +205,7 @@ impl OscConnection {
         .detach();
     }
 }
+#[derive(Debug)]
 pub struct OscManagement {
     addr_inp: Entity<InputState>,
     mp: Entity<MediaPlayer>,
@@ -223,7 +228,7 @@ impl OscManagement {
             conn: None,
         }
     }
-    fn connect(&mut self, cx: &mut Context<Self>) -> Result<()> {
+    fn connect(&mut self, cx: &mut Context<Self>, win: &mut Window) -> Result<()> {
         let conn = cx.new(|cx| {
             OscConnection::new(
                 cx,
@@ -231,6 +236,29 @@ impl OscManagement {
                 self.mp.clone(),
             )
         });
+        cx.observe_in(&conn, win, |this, entity, win, cx| {
+            let state = &entity.read(cx).state;
+            match state {
+                OscConnState::Connecting => todo!(),
+                OscConnState::Connected => {
+                    win.push_notification((NotificationType::Info, "Connected to OSC!"), cx);
+                }
+                OscConnState::Closed(error) => {
+                    let error_message = error
+                        .as_ref()
+                        .map(|x| format!(": {}", x.to_string()))
+                        .unwrap_or("".to_string());
+                    win.push_notification(
+                        (
+                            NotificationType::Error,
+                            format!("Connection to OSC closed{error_message}"),
+                        ),
+                        cx,
+                    );
+                }
+            }
+        })
+        .detach();
         self.conn = Some(conn);
         cx.notify();
         Ok(())
@@ -267,7 +295,7 @@ impl Render for OscManagement {
                     Button::new("osc-connect")
                         .label("connect")
                         .on_click(cx.listener(|this, e, win, cx| {
-                            let outcome = this.connect(cx);
+                            let outcome = this.connect(cx, win);
                             println!("connection = {outcome:?}")
                         })),
                 ),
